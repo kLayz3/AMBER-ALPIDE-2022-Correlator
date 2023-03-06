@@ -1,0 +1,7 @@
+*.C
+*.root
+*.png
+*.txt
+TRLO
+main
+build
