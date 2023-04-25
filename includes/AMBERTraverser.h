@@ -27,6 +27,7 @@ public:
 	int fRun;		   // Branch address for runNumber
 	int fSpill;	       // Branch address for spillNumber
 	int fEventNumber;  // Branch address for eventNumber
+	int fEventType;	   // Branch address for eventType
 	double fEventTime; // Branch address for eventTime
 	
 	uint64_t fEntry;      // Will loop up to max entries;
@@ -53,6 +54,7 @@ public:
 	std::map<int, uint64_t> firstCookieEntry;
 	std::map<int, uint64_t> finalCookieEntry;
 	std::map<int, int> numberOfCookies;
+	std::map<int, std::vector<double>> calibrationTrigs; // trigs type==8 after main spill part ends
 
 	AMBERTraverser() = default;
 	AMBERTraverser(TTree* tree);
@@ -62,10 +64,12 @@ public:
 	DiffAMBER::TriggerType GetTriggerType();
 
 	void IdentifyCookies();
+	void IdentifyCalibrationTrigs();
 
 	void WriteToFilePretty(const char* fileName);
 	void WriteToFile(const char* fileName);
 	void DumpContents();
+
 	void Go();
 };
 

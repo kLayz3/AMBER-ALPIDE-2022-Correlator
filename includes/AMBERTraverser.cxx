@@ -12,6 +12,7 @@ AMBERTraverser::AMBERTraverser(TTree* tree) : fTree(tree), fEntry(0) {
 	fTree->SetBranchAddress("runNumber", &fRun);
 	fTree->SetBranchAddress("spillNumber", &fSpill);
 	fTree->SetBranchAddress("eventNumber", &fEventNumber);
+	fTree->SetBranchAddress("eventType", &fEventType);
 	fTree->SetBranchAddress("eventTime", &fEventTime);
 	
 	prevSpill = 1;
@@ -138,6 +139,31 @@ void AMBERTraverser::IdentifyCookies() {
 	numberOfCookies[prevSpill] = cookieTime.size();
 }
 
+/* This method will save all the triggers that come after the main part of the spill ends.
+ * They should always be kCOOKIE_DIST apart and exactly 1 per such a distance */
+void AMBERTraverser::IdentifyCalibrationTrigs() {
+	/* Go from the startEntry until the spill ends and try identify the type==8 trigs.
+	 * If they're type==8 and kCOOKIE_DIST apart, save them into vector */
+
+	printf("\n%s[AMBER]%s Identifying 'calibration triggers' after each of the spills ... %s\n", KBLUE, KGRN, KNRM);
+	for(const auto [spill, startEntry] : finalCookieEntry) {
+		PrintProgress(spill / (float)finalCookieEntry.size());
+		vector<double> trigTime;
+
+		for(uint64_t i=startEntry; i<fMaxEntries; ++i) {
+			bool b = GetEntry(i);
+			if(!b) break;
+
+			if(fEventType == 8 && abs(tdiff - kCOOKIE_DIST) < kCOOKIE_DIST_WIDTH) {
+				if(trigTime.size() == 0)
+					trigTime.push_back(tprev);
+				trigTime.push_back(tcurr);
+			}
+		}
+		calibrationTrigs[spill] = std::move(trigTime);
+	}
+}
+
 void AMBERTraverser::WriteToFilePretty(const char* fileName) {
 	std::fstream f;
 	f.open(fileName, ios_base::out);
@@ -198,4 +224,5 @@ void AMBERTraverser::DumpContents() {
 void AMBERTraverser::Go() {
 	/* IdentifySpills(); */
 	IdentifyCookies();
+	IdentifyCalibrationTrigs();
 }

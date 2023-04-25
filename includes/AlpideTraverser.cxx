@@ -7,48 +7,24 @@ using namespace DiffAlpide;
 AlpideTraverser::AlpideTraverser(TTree* h101) : fTree(h101), fEvent(0), fSpill(0), fInSpill(false) {
 	if(!fTree | fTree->IsZombie()) throw runtime_error("AlpideTraverser::AlpideTraverser() - Failed to construct tree");
 
-	fMaxEvents = h101->GetEntries();
-	for(int x=1; x<=ALPIDE_NUM; ++x) {
-		fTree->SetBranchAddress(TString::Format("ALPIDE%dT_LO", x), (uint32_t*)&t[x]);
-		fTree->SetBranchAddress(TString::Format("ALPIDE%dT_HI", x), (uint32_t*)((char*)&t[x] + 4));
-	}
-}
-
-bool AlpideTraverser::IsEntryValid() {
-	for(int i=1; i<=ALPIDE_NUM; ++i) {
-		if(t[i] == 0) return false;
-	}
-	return true;
-}
-
-void AlpideTraverser::FindInitialEvent() {
-	for(uint64_t i=0; i<fMaxEvents; ++i) {
-		fTree->GetEntry(i);
-		if(IsEntryValid()) {
-			fInitialTS    = t[1];
-			fInitialEvent = i;
-			tcurr = 0;
-			tprev = 0;
-			break;
-		}
-	}
+	fMaxEntries = h101->GetEntries();
+	fTree->SetBranchAddress("T_UNIQUE", &ts);
+	fTree->GetEntry(0);
+	fInitialTS = ts;
+	tcurr = 0;
+	tprev = 0;
 }
 
 uint64_t AlpideTraverser::SecondsToTimestamp(double t) {return fInitialTS + (uint64_t)(t * 1e9);}
 double	 AlpideTraverser::TimestampToSeconds(uint64_t ts) {return (ts - fInitialTS)/1e9;}
 
 template<class T> bool AlpideTraverser::GetEntry(T entry) {
-	if(entry >= (T)fMaxEvents) {cerr<<"Entry > MaxEvents\n"; return false;}	
-	
+	if(entry >= (T)fMaxEntries) {cerr<<"Entry > MaxEvents\n"; return false;}	
 	fTree->GetEntry(entry);
-	if(!IsEntryValid()) return false;
-
 	tprev = tcurr;
-	tcurr  = (t[1] - fInitialTS)/1e9;
+	tcurr  = (ts - fInitialTS)/1e9;
 	tdiff  = tcurr - tprev;
-
 	fEvent = (uint64_t)entry;
-
 	return true;
 }
 
@@ -74,10 +50,9 @@ void AlpideTraverser::IdentifySpills() {
 	uint64_t currCookieEntry = 0;
 	
 	fInSpill = false;
-	for(uint64_t i=0; i<fMaxEvents; ++i) {
-		PrintProgress(i/(float)(fMaxEvents));
-		bool b = GetEntry(i);
-		if(!b) continue;
+	for(uint64_t i=0; i<fMaxEntries; ++i) {
+		PrintProgress(i/(float)(fMaxEntries));
+		GetEntry(i);
 		
 		TriggerType type = GetTriggerType();
 
@@ -125,34 +100,65 @@ void AlpideTraverser::IdentifySpills() {
  * are correctly separated and considered 'good' */
 
 void AlpideTraverser::IdentifyCookies(int spill) {
-	uint64_t endEvent   = endOfSpill.at(spill);
-	uint64_t startEvent = startOfSpill.at(spill);
+	uint64_t endEntry   = endOfSpill.at(spill);
+	uint64_t startEntry = startOfSpill.at(spill);
 	// If entry not found, then std::out_of_range exception thrown
 	
 	printf("\n%s[ALPIDE]%s Starting spill: %s%d%s\n", KRED, KGRN, KCYN, spill, KNRM);
 
-	std::vector<uint64_t> cookieTime;
-	std::vector<uint64_t> cookieEvent;
+	std::vector<uint64_t> cookieTimestamp;
+	std::vector<double> cookieTime;
+	std::vector<uint64_t> cookieEntry;
 
-	for(uint64_t i=startEvent; i<=endEvent; ++i) {
-		PrintProgress((i - startEvent)/(float)(endEvent - startEvent));
-		bool b = GetEntry(i);
-		if(!b) continue;
+	for(uint64_t i=startEntry; i<=endEntry; ++i) {
+		PrintProgress((i - startEntry)/(float)(endEntry - startEntry));
+		GetEntry(i);
 		
 		TriggerType type = GetTriggerType();
 		
 		if(type == TriggerType::kCOOKIE) {
-			cookieTime.push_back(t[1]);
-			cookieEvent.push_back(i);
+			cookieTimestamp.push_back(ts);
+			cookieTime.push_back(tcurr);
+			cookieEntry.push_back(i);
 		}
 	}
 	
-	firstCookieTimestamp[spill] = cookieTime.front();
-	finalCookieTimestamp[spill] = cookieTime.back();
-	firstCookieEntry[spill] = cookieEvent.front();
-	finalCookieEntry[spill] = cookieEvent.back();
+	firstCookieTimestamp[spill] = cookieTimestamp.front();
+	finalCookieTimestamp[spill] = cookieTimestamp.back();
 	
-	numberOfCookies[spill] = cookieTime.size();
+	firstCookieTime[spill] = cookieTime.front();
+	finalCookieTime[spill] = cookieTime.back();
+
+	firstCookieEntry[spill] = cookieEntry.front();
+	finalCookieEntry[spill] = cookieEntry.back();
+	
+	numberOfCookies[spill] = cookieTimestamp.size();
+}
+
+/* This method will save all the triggers that come after the main part of the spill ends.
+ * They should always be kCOOKIE_DIST apart and exactly 1 per such a distance */
+void AlpideTraverser::IdentifyCalibrationTrigs() {
+	printf("\n%s[ALPIDE]%s - Identifying 'calibration' triggers after each of the spills ... %s\n", KRED, KGRN, KNRM);
+	for(const auto [spill, startEntry] : finalCookieEntry) {
+		PrintProgress(spill / (float)finalCookieEntry.size());
+		vector<double> trigTime;
+
+		uint64_t endEntry;
+		try		   {endEntry = firstCookieEntry.at(spill+1);}
+		catch(...) {endEntry = fMaxEntries;}
+
+		for(uint64_t i=startEntry; i<endEntry; ++i) {
+			bool b = GetEntry(i);
+			if(!b) continue;
+
+			if(abs(tdiff - kCOOKIE_DIST) < kCOOKIE_DIST_WIDTH) {
+				if(trigTime.size() == 0)
+					trigTime.push_back(tprev);
+				trigTime.push_back(tcurr);
+			}
+		}
+		calibrationTrigs[spill] = std::move(trigTime);
+	}
 }
 
 void AlpideTraverser::WriteToFilePretty(const char* fileName) {
@@ -212,8 +218,9 @@ void AlpideTraverser::DumpContents() {
 }
 
 void AlpideTraverser::Go() {
-	FindInitialEvent();
 	IdentifySpills();
 	for(const auto [spill, spillStart] : startOfSpill)
 		IdentifyCookies(spill);
+
+	IdentifyCalibrationTrigs();
 }

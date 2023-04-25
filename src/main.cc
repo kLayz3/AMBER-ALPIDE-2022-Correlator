@@ -43,20 +43,23 @@ int main(int argc, char* argv[]) {
 	A.Go();
 	A.DumpContents();
 
-	map<int,uint64_t> alpideMap = a.finalCookieTimestamp;
-	map<int,double>   amberMap  = A.finalCookieTime;
-
+	map<int,double> alpideMap = a.finalCookieTime;
+	map<int,double>  amberMap = A.finalCookieTime;
 	assert(alpideMap.size() == amberMap.size());
 
 	printf("%s\nFound the corresponding correlated events: %s\n", KGRN, KNRM);
 	printf("\n%sRun Number = %s%d%s\n", KCYN, KMAG, A.fRun, KNRM);
 	for(const auto [spill, ts] : alpideMap) {
-		printf("Spill %s%d%s : ALPIDE: %s0x%lx%s <==> AMBER: %s%.8f%s\n", 
+		printf("Spill %s%d%s : ALPIDE: %s%12.9f%s <==> AMBER: %s%11.9f%s\n", 
 				KCYN, spill, KNRM,
 				KYLW, ts, KNRM,
 				KBLUE, amberMap[spill], KNRM);	
 	}
 
+	map<int, vector<double>> calTrigsAlpide = a.calibrationTrigs;
+	map<int, vector<double>> calTrigsAMBER  = A.calibrationTrigs;
+	cout << "\nAlpide Cal Trig size: " << calTrigsAlpide.size() << endl;  
+	cout << "\nAMBER Cal Trig size: " << calTrigsAMBER.size() << endl;  
 	f_Alpide->Close();
 	f_AMBER->Close();
 
